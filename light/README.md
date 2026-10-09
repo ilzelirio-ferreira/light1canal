@@ -161,3 +161,9 @@ configuracoes de Wi-Fi sao preservados; o mapeamento passa para GPIO 33.
 
 Os binarios copiados na raiz e em `firmware/` pertencem a versoes anteriores.
 Compile este projeto para gerar o `light.bin` de um canal antes de gravar a placa.
+
+Depois de entrar no painel, a secao Pareamento Matter exibe o QR code e o
+codigo manual gerados com as credenciais da placa. A imagem e gerada localmente
+e funciona sem acesso a internet. Conecte primeiro o modulo ao Wi-Fi; a
+ESP32-S2 faz comissionamento pela rede, sem Bluetooth. Para outro controlador
+apos parear, use o compartilhamento do aplicativo Matter ja conectado.

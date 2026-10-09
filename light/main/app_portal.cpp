@@ -2,6 +2,7 @@
 #include "app_relay.h"
 #include "app_input_map.h"
 #include <stddef.h>
+#include "qrcodegen.h"
 #include "app_web_helpers.h"
 #include "app_portal_ui.h"
 #include "sdkconfig.h"
@@ -28,6 +29,7 @@
 #include <lwip/sockets.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/DeviceInfoProvider.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 #include <lib/support/CHIPMem.h>
 
 static const char *TAG = "portal";
@@ -215,6 +217,38 @@ static esp_err_t captive_redirect(httpd_req_t *req, httpd_err_code_t)
     return httpd_resp_send(req, "Abra http://192.168.4.1/", HTTPD_RESP_USE_STRLEN);
 }
 
+// Generate locally and expose setup credentials only through the authenticated config API.
+static void add_matter_pairing(cJSON *json)
+{
+    char payload_text[128] = {}, manual_text[32] = {};
+    chip::MutableCharSpan qr_span(payload_text), manual_span(manual_text);
+    const chip::RendezvousInformationFlags flags(chip::RendezvousInformationFlag::kOnNetwork);
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    chip::PayloadContents payload;
+    CHIP_ERROR err = GetPayloadContents(payload, flags);
+    if (err == CHIP_NO_ERROR) err = GetQRCode(qr_span, payload);
+    if (err == CHIP_NO_ERROR) err = GetManualPairingCode(manual_span, payload);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (err != CHIP_NO_ERROR) return;
+    // Version 5 comfortably fits the standard Matter setup payload; keep stack use bounded.
+    uint8_t temp[qrcodegen_BUFFER_LEN_FOR_VERSION(5)], qr[qrcodegen_BUFFER_LEN_FOR_VERSION(5)];
+    if (!qrcodegen_encodeText(payload_text, temp, qr, qrcodegen_Ecc_MEDIUM,
+                             1, 5, qrcodegen_Mask_AUTO, true)) return;
+    cJSON *pairing = cJSON_AddObjectToObject(json, "matter");
+    if (!pairing) return;
+    cJSON_AddStringToObject(pairing, "payload", payload_text);
+    cJSON_AddStringToObject(pairing, "manual", manual_text);
+    cJSON *rows = cJSON_AddArrayToObject(pairing, "qr");
+    if (!rows) return;
+    const int size = qrcodegen_getSize(qr);
+    char row[38];
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) row[x] = qrcodegen_getModule(qr, x, y) ? '1' : '0';
+        row[size] = 0;
+        cJSON_AddItemToArray(rows, cJSON_CreateString(row));
+    }
+}
+
 static esp_err_t config_get(httpd_req_t *req)
 {
     if (!authenticated(req)) return ESP_OK;
@@ -242,6 +276,7 @@ static esp_err_t config_get(httpd_req_t *req)
         cJSON_AddItemToArray(inputs, cJSON_CreateNumber(config.inputs[i]));
         cJSON_AddItemToArray(outputs, cJSON_CreateNumber(APP_OUTPUT_PINS[i]));
     }
+    add_matter_pairing(json);
     return json_reply(req, json);
 }
 
