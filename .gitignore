@@ -1,0 +1,15 @@
+# Build outputs and archived firmware
+/build/
+/light/build/
+/firmware/
+/bootloader/
+/partition_table/
+/light.bin
+/ota_data_initial.bin
+/flash_args
+/flasher_args.json
+/light/sdkconfig
+/light/sdkconfig.old
+__pycache__/
+*.pyc
+/light/tests/*.exe

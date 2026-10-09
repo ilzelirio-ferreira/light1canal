@@ -1,0 +1,37 @@
+# ESP32-S2: Wi-Fi Matter test, no Bluetooth.
+CONFIG_BT_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=n
+
+# Keep the native USB connection available as the serial console.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_CDC=y
+
+# ROM text routines use Newlib reentrancy structures on ESP32-S2.
+CONFIG_LIBC_PICOLIBC=n
+CONFIG_LIBC_NEWLIB=y
+
+# One 60 Hz optocoupler input (GPIO 33) and active-high MOC3023 output (GPIO 35).
+CONFIG_RELAY_ACTIVE_LOW=n
+
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
+
+# Web configuration AP and per-channel Matter labels.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+CONFIG_SUPPORT_FIXED_LABEL_CLUSTER=y
+CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
+# Updates are handled by the authenticated web OTA endpoint.
+CONFIG_ENABLE_OTA_REQUESTOR=n
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_LWIP_MAX_SOCKETS=16
+
+# ESP32-S2FNR2 has 2 MB embedded PSRAM. Allow larger allocations there
+# so the web server and one Matter channel can coexist.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# Size Matter packet allocations to the actual payload, instead of using
+# full MTU pool blocks for small ACKs, subscriptions and discovery packets.
+CONFIG_USE_LWIP_PBUF_RAM_PACKETBUFFER=y
