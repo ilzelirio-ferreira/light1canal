@@ -30,6 +30,8 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/DeviceInfoProvider.h>
 #include <setup_payload/OnboardingCodesUtil.h>
+#include <app/server/Server.h>
+#include <app/server/CommissioningWindowManager.h>
 #include <lib/support/CHIPMem.h>
 
 static const char *TAG = "portal";
@@ -224,6 +226,8 @@ static void add_matter_pairing(cJSON *json)
     chip::MutableCharSpan qr_span(payload_text), manual_span(manual_text);
     const chip::RendezvousInformationFlags flags(chip::RendezvousInformationFlag::kOnNetwork);
     chip::DeviceLayer::PlatformMgr().LockChipStack();
+    const bool window_open = chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
+    const unsigned fabrics = chip::Server::GetInstance().GetFabricTable().FabricCount();
     chip::PayloadContents payload;
     CHIP_ERROR err = GetPayloadContents(payload, flags);
     if (err == CHIP_NO_ERROR) err = GetQRCode(qr_span, payload);
@@ -236,6 +240,10 @@ static void add_matter_pairing(cJSON *json)
                              1, 5, qrcodegen_Mask_AUTO, true)) return;
     cJSON *pairing = cJSON_AddObjectToObject(json, "matter");
     if (!pairing) return;
+    cJSON_AddBoolToObject(pairing, "windowOpen", window_open);
+    cJSON_AddNumberToObject(pairing, "fabrics", fabrics);
+    wifi_ap_record_t access_point = {};
+    cJSON_AddBoolToObject(pairing, "wifiConnected", esp_wifi_sta_get_ap_info(&access_point) == ESP_OK);
     cJSON_AddStringToObject(pairing, "payload", payload_text);
     cJSON_AddStringToObject(pairing, "manual", manual_text);
     uint8_t mac[6];
@@ -285,6 +293,28 @@ static esp_err_t config_get(httpd_req_t *req)
     }
     add_matter_pairing(json);
     return json_reply(req, json);
+}
+
+static esp_err_t pairing_post(httpd_req_t *req)
+{
+    if (!authenticated(req)) return ESP_OK;
+    wifi_ap_record_t access_point = {};
+    if (esp_wifi_sta_get_ap_info(&access_point) != ESP_OK)
+        return reply(req, "409 Conflict", "Conecte a placa ao mesmo Wi-Fi do Echo antes de parear.");
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    auto &manager = chip::Server::GetInstance().GetCommissioningWindowManager();
+    // An explicit authenticated request enables the original per-board code again.
+    // Keep an existing session intact; retry after its window closes if necessary.
+    CHIP_ERROR err = CHIP_NO_ERROR;
+    if (!manager.IsCommissioningWindowOpen())
+        err = manager.OpenBasicCommissioningWindow(chip::System::Clock::Seconds16(900),
+                                                  chip::CommissioningWindowAdvertisement::kDnssdOnly);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Cannot open pairing window: %" CHIP_ERROR_FORMAT, err.Format());
+        return reply(req, "409 Conflict", "Nao foi possivel abrir o pareamento. Aguarde a tentativa atual terminar e tente novamente.");
+    }
+    return config_get(req);
 }
 
 static bool receive_exact(httpd_req_t *req, char *buffer, size_t length)
@@ -593,7 +623,7 @@ esp_err_t app_portal_start()
     snprintf(ap_name, sizeof(ap_name), "Light-%02X%02X%02X", mac[3], mac[4], mac[5]);
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     http.stack_size = 8192;
-    http.max_uri_handlers = 4;
+    http.max_uri_handlers = 5;
     http.max_open_sockets = 4;
     http.lru_purge_enable = true;
     http.recv_wait_timeout = 5;
@@ -601,10 +631,12 @@ esp_err_t app_portal_start()
     httpd_uri_t root = {}; root.uri = "/"; root.method = HTTP_GET; root.handler = root_handler;
     httpd_uri_t get = {}; get.uri = "/api/config"; get.method = HTTP_GET; get.handler = config_get;
     httpd_uri_t save = {}; save.uri = "/api/config"; save.method = HTTP_POST; save.handler = config_post;
+    httpd_uri_t pairing = {}; pairing.uri = "/api/matter/pair"; pairing.method = HTTP_POST; pairing.handler = pairing_post;
     httpd_uri_t ota = {}; ota.uri = "/api/ota"; ota.method = HTTP_POST; ota.handler = ota_post;
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), TAG, "root handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &get), TAG, "config handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &save), TAG, "save handler");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &pairing), TAG, "pairing handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &ota), TAG, "OTA handler");
     ESP_RETURN_ON_ERROR(httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect), TAG, "captive redirect");
     if (xTaskCreate(network_task, "portal_network", 4096, nullptr, 2, nullptr) != pdPASS ||

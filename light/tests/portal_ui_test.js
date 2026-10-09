@@ -9,7 +9,7 @@ class Element {
   get id() { return this._id; }
   append() {}
 }
-for (const id of ['login','panel','key','enter','loginStatus','module','ssid','names','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice']) {
+for (const id of ['login','panel','key','enter','loginStatus','module','ssid','names','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice','pairMatter']) {
   const element = new Element(); element.id = id;
 }
 let request;
@@ -25,7 +25,7 @@ const context = vm.createContext({
   document: {getElementById: id => elements.get(id), createElement: () => new Element(), querySelectorAll: () => [elements.get('enter'),elements.get('upload')]},
   fetch: async (path, options) => {
     lastFetch = {path, options};
-    return {ok: !unauthorized, text: async () => 'Senha incorreta', json: async () => options.method ? {message:'Salvo'} : config};
+    return {ok: !unauthorized, text: async () => 'Senha incorreta', json: async () => options.method && path !== '/api/matter/pair' ? {message:'Salvo'} : config};
   },
   XMLHttpRequest: XHR,
 });
@@ -44,6 +44,20 @@ const get = id => elements.get(id);
   assert.equal(get('matterQr').hidden, false);
   assert.equal(get('matterManual').textContent, config.matter.manual);
   assert.equal(get('matterDevice').textContent, config.matter.device);
+  config.matter.windowOpen = false;
+  get('key').value = 'configurar123';
+  await get('enter').onclick();
+  assert.match(get('matterStatus').textContent, /Pareamento fechado/);
+  config.matter.windowOpen = true;
+  await get('pairMatter').onclick();
+  assert.equal(lastFetch.path, '/api/matter/pair');
+  assert.equal(lastFetch.options.method, 'POST');
+  assert.equal(lastFetch.options.headers['X-Portal-Key'], 'configurar123');
+  assert.match(get('matterStatus').textContent, /Pareamento aberto/);
+  config.matter.wifiConnected = false;
+  await get('pairMatter').onclick();
+  assert.match(get('matterStatus').textContent, /fora do Wi-Fi/);
+  config.matter.wifiConnected = true;
   const qrSvg = decodeURIComponent(get('matterQr').src.split(',')[1]);
   assert.match(qrSvg, /viewBox="0 0 11 11"/);
   assert.match(qrSvg, /M4 4h1v1h-1z/);

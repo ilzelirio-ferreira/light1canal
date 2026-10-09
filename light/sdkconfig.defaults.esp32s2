@@ -42,3 +42,7 @@ CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER=y
 
 # Room for the one-time SPAKE2+ verifier derivation during app_main startup.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Advertise network commissioning for Alexa discovery on this Wi-Fi-only chip.
+CONFIG_ENABLE_EXTENDED_DISCOVERY=y
+CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
