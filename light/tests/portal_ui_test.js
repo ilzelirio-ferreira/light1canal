@@ -42,6 +42,14 @@ const get = id => elements.get(id);
   assert.equal(get('module').value, config.module);
   assert.equal(get('name0').value, config.names[0]);
   assert.equal(get('info').textContent, 'Versão 1.0 · IP 192.168.15.5');
+  // Legacy API responses may include all six stored names.
+  config.names.push('Luz 2', 'Luz 3', 'Luz 4', 'Luz 5', 'Luz 6');
+  get('panel').hidden = true;
+  get('key').value = 'configurar123';
+  await get('enter').onclick();
+  assert.equal(get('panel').hidden, false);
+  assert.equal(get('name0').value, config.names[0]);
+  config.names.splice(1);
   await get('settings').onsubmit({preventDefault(){}});
   const saved = JSON.parse(lastFetch.options.body);
   assert.equal(saved.ssid, config.ssid);

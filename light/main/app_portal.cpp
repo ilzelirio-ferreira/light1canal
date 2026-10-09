@@ -234,7 +234,8 @@ static esp_err_t config_get(httpd_req_t *req)
     cJSON_AddStringToObject(json, "version", esp_app_get_description()->version);
     cJSON_AddStringToObject(json, "ip", ip);
     cJSON *names = cJSON_AddArrayToObject(json, "names");
-    for (const auto &name : config.names) cJSON_AddItemToArray(names, cJSON_CreateString(name));
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i)
+        cJSON_AddItemToArray(names, cJSON_CreateString(config.names[i]));
     cJSON *inputs = cJSON_AddArrayToObject(json, "inputs");
     cJSON *outputs = cJSON_AddArrayToObject(json, "outputs");
     for (unsigned i=0;i<APP_RELAY_CHANNEL_COUNT;++i) {
