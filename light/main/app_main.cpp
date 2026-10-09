@@ -21,6 +21,7 @@
 #include <app_priv.h>
 #include "app_portal.h"
 #include "app_relay.h"
+#include "app_pairing.h"
 #include <app_reset.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
@@ -171,6 +172,7 @@ extern "C" void app_main()
 
     /* Initialize the ESP NVS layer */
     ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(app_pairing_init());
     ESP_ERROR_CHECK(app_portal_load());
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("Bootup");

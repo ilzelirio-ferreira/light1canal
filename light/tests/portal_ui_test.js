@@ -9,7 +9,7 @@ class Element {
   get id() { return this._id; }
   append() {}
 }
-for (const id of ['login','panel','key','enter','loginStatus','module','ssid','names','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus']) {
+for (const id of ['login','panel','key','enter','loginStatus','module','ssid','names','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice']) {
   const element = new Element(); element.id = id;
 }
 let request;
@@ -19,7 +19,7 @@ class XHR {
   setRequestHeader(key, value) { this.headers[key] = value; }
   send(body) { this.body = body; }
 }
-const config = {module: 'Modulo <script>', ssid: 'Rede "teste"', names: ['Luz <1>'], inputs:[33],matter:{payload:'MT:TEST',manual:'12345678901',qr:['101','010','101']},version:'1.0', ip:'192.168.15.5'};
+const config = {module: 'Modulo <script>', ssid: 'Rede "teste"', names: ['Luz <1>'], inputs:[33],matter:{device:'80:65:99:4C:CB:9C',payload:'MT:TEST',manual:'12345678901',qr:['101','010','101']},version:'1.0', ip:'192.168.15.5'};
 let lastFetch, unauthorized = false;
 const context = vm.createContext({
   document: {getElementById: id => elements.get(id), createElement: () => new Element(), querySelectorAll: () => [elements.get('enter'),elements.get('upload')]},
@@ -43,6 +43,7 @@ const get = id => elements.get(id);
   assert.equal(get('name0').value, config.names[0]);
   assert.equal(get('matterQr').hidden, false);
   assert.equal(get('matterManual').textContent, config.matter.manual);
+  assert.equal(get('matterDevice').textContent, config.matter.device);
   const qrSvg = decodeURIComponent(get('matterQr').src.split(',')[1]);
   assert.match(qrSvg, /viewBox="0 0 11 11"/);
   assert.match(qrSvg, /M4 4h1v1h-1z/);

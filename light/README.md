@@ -167,3 +167,24 @@ codigo manual gerados com as credenciais da placa. A imagem e gerada localmente
 e funciona sem acesso a internet. Conecte primeiro o modulo ao Wi-Fi; a
 ESP32-S2 faz comissionamento pela rede, sem Bluetooth. Para outro controlador
 apos parear, use o compartilhamento do aplicativo Matter ja conectado.
+
+## Credenciais Matter por placa
+
+O mesmo firmware gera credenciais na primeira inicializacao de cada ESP32-S2.
+O MAC gravado em eFuse identifica a placa e determina o discriminador de 12 bits.
+A senha de pareamento e o salt SPAKE2+ sao aleatorios, com entropia de hardware;
+a senha nao e derivada do MAC e o PIN de exemplo 20202021 nao e usado.
+O verificador SPAKE2+ e calculado com a mesma senha e salt usados pelo provedor.
+
+A identidade e salva na particao `fctry`, namespace `light_pair`, antes de iniciar
+Matter. Reinicios, OTA, gravacoes com `flash_args` e reset Matter preservam os
+codigos. Apagar toda a flash ou essa particao gera uma nova identidade.
+Uma identidade copiada de outra placa e substituida ao detectar outro MAC.
+Dados invalidos ou falhas de gravacao interrompem a inicializacao; nao ha retorno
+a credenciais compartilhadas. O discriminador possui apenas 4096 possibilidades
+e pode repetir; a senha aleatoria tambem diferencia os codigos de pareamento.
+
+O QR, o codigo manual no painel e `matter onboardingcodes onnetwork` passam a
+usar este provedor. O painel tambem mostra o MAC para identificar cada placa.
+Esta mudanca trata credenciais de comissionamento; os certificados DAC de
+exemplo continuam como estavam no projeto.

@@ -21,6 +21,8 @@ jobs:
           /tmp/ac_input_test
           g++ -std=c++17 -Wall -Wextra -Werror light/tests/web_helpers_test.cpp -o /tmp/web_helpers_test
           /tmp/web_helpers_test
+          g++ -std=c++17 -Wall -Wextra -Werror light/tests/pairing_identity_test.cpp -o /tmp/pairing_identity_test
+          /tmp/pairing_identity_test
           node light/tests/portal_ui_test.js
 
       - name: Pull ESP-Matter Docker image

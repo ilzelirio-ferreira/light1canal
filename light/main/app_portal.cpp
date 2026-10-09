@@ -238,6 +238,13 @@ static void add_matter_pairing(cJSON *json)
     if (!pairing) return;
     cJSON_AddStringToObject(pairing, "payload", payload_text);
     cJSON_AddStringToObject(pairing, "manual", manual_text);
+    uint8_t mac[6];
+    if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+        char device[18];
+        snprintf(device, sizeof(device), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(pairing, "device", device);
+    }
     cJSON *rows = cJSON_AddArrayToObject(pairing, "qr");
     if (!rows) return;
     const int size = qrcodegen_getSize(qr);
