@@ -39,3 +39,6 @@ CONFIG_USE_LWIP_PBUF_RAM_PACKETBUFFER=y
 # Generate and persist per-device credentials; do not use the shared example PIN/verifier.
 CONFIG_EXAMPLE_COMMISSIONABLE_DATA_PROVIDER=n
 CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER=y
+
+# Room for the one-time SPAKE2+ verifier derivation during app_main startup.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
