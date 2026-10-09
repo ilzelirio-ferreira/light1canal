@@ -148,6 +148,10 @@ esp_err_t app_portal_load()
         if (valid) config = saved;
         else if (err != ESP_ERR_NVS_NOT_FOUND) ESP_LOGW(TAG, "Invalid portal config; using setup defaults");
     } else if (err != ESP_ERR_NVS_NOT_FOUND) return err;
+    // Keep the legacy NVS layout, but use one name for the node and its only light.
+    if (!portal_text(config.module, 16))
+        snprintf(config.module, sizeof(config.module), "%s", config.names[0]);
+    memcpy(config.names[0], config.module, strlen(config.module) + 1);
     ESP_RETURN_ON_ERROR(app_relay_configure_inputs(config.inputs), TAG, "input mapping");
     esp_matter::set_custom_device_info_provider(&name_provider);
     return ESP_OK;
@@ -195,7 +199,7 @@ static esp_err_t json_reply(httpd_req_t *req, cJSON *json)
 {
     char *body = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
-    if (!body) return reply(req, "500 Internal Server Error", "MemÛria insuficiente.");
+    if (!body) return reply(req, "500 Internal Server Error", "Mem√≥ria insuficiente.");
     httpd_resp_set_type(req, "application/json; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     esp_err_t err = httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
@@ -213,7 +217,7 @@ static esp_err_t root_handler(httpd_req_t *req)
 
 static esp_err_t captive_redirect(httpd_req_t *req, httpd_err_code_t)
 {
-    if (!ap_active.load()) return reply(req, "404 Not Found", "P·gina n„o encontrada.");
+    if (!ap_active.load()) return reply(req, "404 Not Found", "P√°gina n√£o encontrada.");
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     return httpd_resp_send(req, "Abra http://192.168.4.1/", HTTPD_RESP_USE_STRLEN);
@@ -277,7 +281,7 @@ static esp_err_t config_get(httpd_req_t *req)
     if (sta && esp_netif_get_ip_info(sta, &info) == ESP_OK && info.ip.addr)
         snprintf(ip, sizeof(ip), IPSTR, IP2STR(&info.ip));
     cJSON *json = cJSON_CreateObject();
-    if (!json) return reply(req, "500 Internal Server Error", "MemÛria insuficiente.");
+    if (!json) return reply(req, "500 Internal Server Error", "Mem√≥ria insuficiente.");
     cJSON_AddStringToObject(json, "module", config.module);
     cJSON_AddStringToObject(json, "ssid", ssid);
     cJSON_AddStringToObject(json, "version", esp_app_get_description()->version);
@@ -312,11 +316,10 @@ static esp_err_t pairing_post(httpd_req_t *req)
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
     if (err != CHIP_NO_ERROR) {
         ESP_LOGW(TAG, "Cannot open pairing window: %" CHIP_ERROR_FORMAT, err.Format());
-        return reply(req, "409 Conflict", "Nao foi possivel abrir o pareamento. Aguarde a tentativa atual terminar e tente novamente.");
+        return reply(req, "409 Conflict", "N√£o foi poss√≠vel abrir o pareamento. Aguarde a tentativa atual terminar e tente novamente.");
     }
     return config_get(req);
 }
-
 static bool receive_exact(httpd_req_t *req, char *buffer, size_t length)
 {
     size_t offset = 0;
@@ -339,11 +342,11 @@ static const char *json_string(cJSON *json, const char *key)
 static esp_err_t config_post(httpd_req_t *req)
 {
     if (!authenticated(req)) return ESP_OK;
-    if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra operaÁ„o est· em andamento.");
+    if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra opera√ß√£o est√° em andamento.");
     char body[1537];
     if (req->content_len <= 0 || req->content_len >= sizeof(body)) {
         changing.store(false);
-        return reply(req, "400 Bad Request", "ConfiguraÁ„o inv·lida ou muito grande.");
+        return reply(req, "400 Bad Request", "Configura√ß√£o inv√°lida ou muito grande.");
     }
     if (!receive_exact(req, body, req->content_len)) {
         changing.store(false);
@@ -356,18 +359,13 @@ static esp_err_t config_post(httpd_req_t *req)
     const char *ssid = json_string(json, "ssid");
     const char *password = json_string(json, "password");
     const char *new_key = json_string(json, "newKey");
-    cJSON *names = cJSON_GetObjectItemCaseSensitive(json, "names");
-    bool valid = cJSON_IsObject(json) && portal_text(module, 32) && portal_text(ssid, 32, true)
+
+    bool valid = cJSON_IsObject(json) && portal_text(module, 16) && portal_text(ssid, 32, true)
                  && password && strlen(password) <= 63 && new_key && strlen(new_key) <= 63
-                 && (new_key[0] == 0 || portal_key(new_key))
-                 && cJSON_IsArray(names) && cJSON_GetArraySize(names) == static_cast<int>(APP_RELAY_CHANNEL_COUNT);
+                 && (new_key[0] == 0 || portal_key(new_key));
     if (valid) {
         snprintf(next.module, sizeof(next.module), "%s", module);
-        for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
-            cJSON *name = cJSON_GetArrayItem(names, i);
-            if (!cJSON_IsString(name) || !portal_text(name->valuestring, 16)) { valid = false; break; }
-            snprintf(next.names[i], sizeof(next.names[i]), "%s", name->valuestring);
-        }
+        snprintf(next.names[0], sizeof(next.names[0]), "%s", module);
         if (new_key[0]) snprintf(next.key, sizeof(next.key), "%s", new_key);
     }
     cJSON *inputs = cJSON_GetObjectItemCaseSensitive(json, "inputs");
@@ -408,7 +406,7 @@ static esp_err_t config_post(httpd_req_t *req)
     cJSON_Delete(json);
     if (!valid) {
         changing.store(false);
-        return reply(req, "400 Bad Request", "Confira os campos: mÛdulo atÈ 32 bytes, canais atÈ 16 bytes, senha entre 8 e 63 caracteres.");
+        return reply(req, "400 Bad Request", "Confira os campos: nome do dispositivo at√© 16 bytes, senha entre 8 e 63 caracteres.");
     }
     if (err == ESP_OK) err = store_config(next);
     if (err == ESP_OK && wifi_changed) {
@@ -419,31 +417,31 @@ static esp_err_t config_post(httpd_req_t *req)
     if (err != ESP_OK) {
         changing.store(false);
         ESP_LOGE(TAG, "Save failed: %s", esp_err_to_name(err));
-        return reply(req, "500 Internal Server Error", "N„o foi possÌvel salvar a configuraÁ„o.");
+        return reply(req, "500 Internal Server Error", "N√£o foi poss√≠vel salvar a configura√ß√£o.");
     }
     err = esp_timer_start_once(reboot_timer, 1500000);
     if (err != ESP_OK) {
         store_config(config);
         if (wifi_changed) esp_wifi_set_config(WIFI_IF_STA, &previous_wifi);
         changing.store(false);
-        return reply(req, "500 Internal Server Error", "N„o foi possÌvel agendar o reinÌcio.");
+        return reply(req, "500 Internal Server Error", "N√£o foi poss√≠vel agendar o rein√≠cio.");
     }
     cJSON *result = cJSON_CreateObject();
-    if (!result) return reply(req, "200 OK", "ConfiguraÁ„o salva. Reiniciando.");
-    cJSON_AddStringToObject(result, "message", "ConfiguraÁ„o salva. Reiniciando. Se a rede n„o conectar, o portal reaparecer· em 30 segundos.");
+    if (!result) return reply(req, "200 OK", "Configura√ß√£o salva. Reiniciando.");
+    cJSON_AddStringToObject(result, "message", "Configura√ß√£o salva. Reiniciando. Se a rede n√£o conectar, o portal reaparecer√° em 30 segundos.");
     return json_reply(req, result);
 }
 
 static esp_err_t ota_post(httpd_req_t *req)
 {
     if (!authenticated(req)) return ESP_OK;
-    if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra operaÁ„o est· em andamento.");
+    if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra opera√ß√£o est√° em andamento.");
     const auto *partition = esp_ota_get_next_update_partition(nullptr);
     constexpr size_t prefix_size = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t);
     char buffer[4096];
     if (!partition || req->content_len < prefix_size || static_cast<size_t>(req->content_len) > partition->size) {
         changing.store(false);
-        return reply(req, "400 Bad Request", "Arquivo inv·lido ou maior que a partiÁ„o OTA. Use o light.bin.");
+        return reply(req, "400 Bad Request", "Arquivo inv√°lido ou maior que a parti√ß√£o OTA. Use o light.bin.");
     }
     if (!receive_exact(req, buffer, prefix_size)) {
         changing.store(false);
@@ -457,13 +455,13 @@ static esp_err_t ota_post(httpd_req_t *req)
         app.magic_word != ESP_APP_DESC_MAGIC_WORD ||
         memcmp(app.project_name, esp_app_get_description()->project_name, sizeof(app.project_name)) != 0) {
         changing.store(false);
-        return reply(req, "400 Bad Request", "Esse arquivo n„o È um light.bin para ESP32-S2.");
+        return reply(req, "400 Bad Request", "Esse arquivo n√£o √© um light.bin para ESP32-S2.");
     }
     esp_ota_handle_t handle = 0;
     esp_err_t err = esp_ota_begin(partition, req->content_len, &handle);
     if (err != ESP_OK) {
         changing.store(false);
-        return reply(req, "500 Internal Server Error", "N„o foi possÌvel iniciar a atualizaÁ„o.");
+        return reply(req, "500 Internal Server Error", "N√£o foi poss√≠vel iniciar a atualiza√ß√£o.");
     }
     err = esp_ota_write(handle, buffer, prefix_size);
     size_t remaining = req->content_len - prefix_size;
@@ -477,7 +475,7 @@ static esp_err_t ota_post(httpd_req_t *req)
         esp_ota_abort(handle);
         changing.store(false);
         ESP_LOGE(TAG, "OTA receive/write failed: %s", esp_err_to_name(err));
-        return reply(req, "400 Bad Request", "AtualizaÁ„o interrompida. Firmware atual preservado.");
+        return reply(req, "400 Bad Request", "Atualiza√ß√£o interrompida. Firmware atual preservado.");
     }
     err = esp_ota_end(handle); // Validates the complete image before switching boot slot.
     if (err == ESP_OK) err = esp_ota_set_boot_partition(partition);
@@ -486,10 +484,10 @@ static esp_err_t ota_post(httpd_req_t *req)
         esp_ota_set_boot_partition(esp_ota_get_running_partition());
         changing.store(false);
         ESP_LOGE(TAG, "OTA validation/activation failed: %s", esp_err_to_name(err));
-        return reply(req, "400 Bad Request", "Falha ao validar ou ativar o firmware. Vers„o atual preservada.");
+        return reply(req, "400 Bad Request", "Falha ao validar ou ativar o firmware. Vers√£o atual preservada.");
     }
     ESP_LOGI(TAG, "Web OTA validated, rebooting");
-    return reply(req, "200 OK", "AtualizaÁ„o validada. Reiniciando.");
+    return reply(req, "200 OK", "Atualiza√ß√£o validada. Reiniciando.");
 }
 
 static esp_err_t set_ap(bool enabled)

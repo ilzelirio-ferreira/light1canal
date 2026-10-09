@@ -2,6 +2,12 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync('light/main/app_portal_ui.h', 'utf8').split('<script>')[1].split('</script>')[0];
+assert.equal(fs.readFileSync('light/main/app_portal_ui.h', 'utf8').includes('\uFFFD'), false);
+assert.equal(fs.readFileSync('light/main/app_portal.cpp', 'utf8').includes('\uFFFD'), false);
+assert.match(fs.readFileSync('light/main/app_portal_ui.h', 'utf8'), /Configuração/);
+assert.match(fs.readFileSync('light/main/app_portal_ui.h', 'utf8'), /Nome do dispositivo/);
+assert.equal(fs.readFileSync('light/main/app_portal_ui.h', 'utf8').includes('Nome do módulo'), false);
+assert.equal(fs.readFileSync('light/main/app_portal_ui.h', 'utf8').includes('id="names"'), false);
 const elements = new Map();
 class Element {
   constructor() { this.value = ''; this.style = {}; this.hidden = false; this.disabled = false; this.files = []; }
@@ -9,7 +15,7 @@ class Element {
   get id() { return this._id; }
   append() {}
 }
-for (const id of ['login','panel','key','enter','loginStatus','module','ssid','names','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice','pairMatter']) {
+for (const id of ['login','panel','key','enter','loginStatus','module','ssid','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice','pairMatter']) {
   const element = new Element(); element.id = id;
 }
 let request;
@@ -27,12 +33,12 @@ const context = vm.createContext({
     lastFetch = {path, options};
     return {ok: !unauthorized, text: async () => 'Senha incorreta', json: async () => options.method && path !== '/api/matter/pair' ? {message:'Salvo'} : config};
   },
-  XMLHttpRequest: XHR,
+  XMLHttpRequest: XHR, TextEncoder,
 });
 vm.runInContext(source, context);
 const get = id => elements.get(id);
 (async () => {
-  assert.equal(elements.has('name0'), true);
+  assert.equal(elements.has('name0'), false);
   assert.equal(elements.has('name1'), false);
   assert.equal(elements.has('input1'), false);
   get('key').value = 'configurar123';
@@ -40,7 +46,7 @@ const get = id => elements.get(id);
   assert.equal(lastFetch.options.headers['X-Portal-Key'], 'configurar123');
   assert.equal(get('panel').hidden, false);
   assert.equal(get('module').value, config.module);
-  assert.equal(get('name0').value, config.names[0]);
+
   assert.equal(get('matterQr').hidden, false);
   assert.equal(get('matterManual').textContent, config.matter.manual);
   assert.equal(get('matterDevice').textContent, config.matter.device);
@@ -64,31 +70,34 @@ const get = id => elements.get(id);
   vm.runInContext('showMatter(null)', context);
   assert.equal(get('matterQr').hidden, true);
   vm.runInContext('showMatter({qr:["<script>"]})', context);
-  assert.match(get('matterStatus').textContent, /invalido/);
+  assert.match(get('matterStatus').textContent, /inválido/);
   vm.runInContext('showMatter({manual:"123",qr:["1"]})', context);
-  assert.equal(get('info').textContent, 'Vers�o 1.0 � IP 192.168.15.5');
+  assert.equal(get('info').textContent, 'Versão 1.0 · IP 192.168.15.5');
   // Legacy API responses may include all six stored names.
   config.names.push('Luz 2', 'Luz 3', 'Luz 4', 'Luz 5', 'Luz 6');
   get('panel').hidden = true;
   get('key').value = 'configurar123';
   await get('enter').onclick();
   assert.equal(get('panel').hidden, false);
-  assert.equal(get('name0').value, config.names[0]);
+
   config.names.splice(1);
   await get('settings').onsubmit({preventDefault(){}});
   const saved = JSON.parse(lastFetch.options.body);
   assert.equal(saved.ssid, config.ssid);
-  assert.equal(saved.names.length, 1);
+  assert.equal(saved.module, config.module);
+  assert.equal('names' in saved, false);
   assert.deepEqual(saved.inputs, config.inputs);
   assert.equal(saved.password, '');
   assert.equal(lastFetch.options.headers['Content-Type'], 'application/json');
   assert.equal(get('saveStatus').textContent, 'Salvo');
-  get('input0').value = 34;
+  get('module').value = 'Á'.repeat(9);
   const previousFetch = lastFetch;
   await get('settings').onsubmit({preventDefault(){}});
   assert.equal(lastFetch, previousFetch);
-  assert.match(get('saveStatus').textContent, /GPIO 33/);
-  get('input0').value = config.inputs[0];
+  assert.match(get('saveStatus').textContent, /16 bytes/);
+  get('module').value = 'Luz da saída';
+  await get('settings').onsubmit({preventDefault(){}});
+  assert.equal(JSON.parse(lastFetch.options.body).module, 'Luz da saída');
   get('upload').onclick();
   assert.equal(get('otaStatus').textContent, 'Selecione o light.bin.');
   const file = {name:'light.bin', size:1234}; get('firmware').files = [file];
@@ -99,8 +108,8 @@ const get = id => elements.get(id);
   assert.equal(request.body, file);
   request.upload.onprogress({lengthComputable:true, loaded:50,total:100});
   assert.equal(get('progress').value, 50);
-  request.status = 400; request.responseText = 'Firmware inv�lido'; request.onload();
-  assert.equal(get('otaStatus').textContent, 'Firmware inv�lido');
+  request.status = 400; request.responseText = 'Firmware inválido'; request.onload();
+  assert.equal(get('otaStatus').textContent, 'Firmware inválido');
   assert.equal(get('upload').disabled, false);
   request.status = 200; request.onload();
   assert.match(get('otaStatus').textContent, /validada/);
