@@ -46,3 +46,5 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # Advertise network commissioning for Alexa discovery on this Wi-Fi-only chip.
 CONFIG_ENABLE_EXTENDED_DISCOVERY=y
 CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
+# Primary discovery type matches the on/off light endpoint (0x0100).
+CONFIG_DEVICE_TYPE=256
