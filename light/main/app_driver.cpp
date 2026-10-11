@@ -189,7 +189,7 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
 #if CONFIG_IDF_TARGET_ESP32S2
     esp_matter_attr_val_t power = {};
     err = attribute::get_val(endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &power);
-    return err == ESP_OK ? app_relay_set_power(endpoint_id, power.val.b) : err;
+    return err == ESP_OK ? app_relay_restore_power(endpoint_id, power.val.b) : err;
 #else
     void *priv_data = endpoint::get_priv_data(endpoint_id);
     led_driver_handle_t handle = (led_driver_handle_t)priv_data;

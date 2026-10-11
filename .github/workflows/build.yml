@@ -24,6 +24,7 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror light/tests/pairing_identity_test.cpp -o /tmp/pairing_identity_test
           /tmp/pairing_identity_test
           node light/tests/portal_ui_test.js
+          python3 light/tests/relay_local_test.py
 
       - name: Pull ESP-Matter Docker image
         run: docker pull espressif/esp-matter:latest

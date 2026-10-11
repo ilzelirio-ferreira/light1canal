@@ -170,6 +170,12 @@ extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
 
+#if CONFIG_IDF_TARGET_ESP32S2
+    // Physical control starts before storage, pairing credentials, Wi-Fi and Matter.
+    ESP_ERROR_CHECK(app_relay_init());
+    ESP_ERROR_CHECK(app_relay_start_switch());
+#endif
+
     /* Initialize the ESP NVS layer */
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(app_pairing_init());
@@ -278,7 +284,10 @@ extern "C" void app_main()
 #else
     ESP_ERROR_CHECK(app_driver_light_set_defaults(light_endpoint_id));
 #endif
+    app_relay_enable_matter_sync();
+#if !CONFIG_IDF_TARGET_ESP32S2
     ESP_ERROR_CHECK(app_relay_start_switch());
+#endif
     ESP_ERROR_CHECK(app_portal_start());
 
 #if CONFIG_ENABLE_ENCRYPTED_OTA

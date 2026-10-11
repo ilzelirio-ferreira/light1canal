@@ -22,6 +22,13 @@ static Channel channels[APP_RELAY_CHANNEL_COUNT] = {
     {static_cast<gpio_num_t>(APP_OUTPUT_PINS[0]), static_cast<gpio_num_t>(APP_DEFAULT_INPUTS[0]), 0},
 };
 static std::atomic<bool> pending[APP_RELAY_CHANNEL_COUNT]{};
+static std::atomic<bool> dirty[APP_RELAY_CHANNEL_COUNT]{};
+static std::atomic<bool> matter_ready{false};
+static std::atomic<TaskHandle_t> syncing_task{nullptr};
+static bool power[APP_RELAY_CHANNEL_COUNT]{};
+static bool locally_changed[APP_RELAY_CHANNEL_COUNT]{};
+static bool initialized = false;
+static portMUX_TYPE output_lock = portMUX_INITIALIZER_UNLOCKED;
 static AcPulseDetector pulses[APP_RELAY_CHANNEL_COUNT]{};
 static portMUX_TYPE pulse_lock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -43,12 +50,30 @@ static bool signal_present(unsigned channel)
     return pulse.present(now);
 }
 
+// All writers serialize the GPIO and its logical state without taking the CHIP lock.
+static esp_err_t write_power_locked(unsigned channel, bool on)
+{
+    const bool level = CONFIG_RELAY_ACTIVE_LOW ? !on : on;
+    esp_err_t err = gpio_set_level(channels[channel].output, level);
+    if (err == ESP_OK) power[channel] = on;
+    return err;
+}
+
 static esp_err_t set_channel_power(unsigned channel, bool on)
 {
-#if CONFIG_RELAY_ACTIVE_LOW
-    on = !on;
-#endif
-    return gpio_set_level(channels[channel].output, on);
+    portENTER_CRITICAL(&output_lock);
+    esp_err_t err = write_power_locked(channel, on);
+    portEXIT_CRITICAL(&output_lock);
+    return err;
+}
+
+static esp_err_t toggle_local(unsigned channel)
+{
+    portENTER_CRITICAL(&output_lock);
+    esp_err_t err = write_power_locked(channel, !power[channel]);
+    if (err == ESP_OK) { locally_changed[channel] = true; dirty[channel].store(true); }
+    portEXIT_CRITICAL(&output_lock);
+    return err;
 }
 
 esp_err_t app_relay_register_endpoint(unsigned channel, uint16_t endpoint_id)
@@ -78,8 +103,22 @@ bool app_relay_has_endpoint(uint16_t endpoint_id)
 esp_err_t app_relay_set_power(uint16_t endpoint_id, bool on)
 {
     if (!endpoint_id) return ESP_ERR_INVALID_ARG;
+    // A report of local state must never replay an older value onto the GPIO.
+    if (syncing_task.load() == xTaskGetCurrentTaskHandle()) return ESP_OK;
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
         if (channels[i].endpoint == endpoint_id) return set_channel_power(i, on);
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t app_relay_restore_power(uint16_t endpoint_id, bool on)
+{
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
+        if (channels[i].endpoint != endpoint_id) continue;
+        portENTER_CRITICAL(&output_lock);
+        esp_err_t err = locally_changed[i] ? ESP_OK : write_power_locked(i, on);
+        portEXIT_CRITICAL(&output_lock);
+        return err;
     }
     return ESP_ERR_NOT_FOUND;
 }
@@ -92,6 +131,7 @@ esp_err_t app_relay_configure_inputs(const uint8_t *pins)
 }
 esp_err_t app_relay_init()
 {
+    if (initialized) return ESP_OK;
     gpio_config_t output = {};
     output.mode = GPIO_MODE_OUTPUT;
     gpio_config_t input = {};
@@ -105,23 +145,35 @@ esp_err_t app_relay_init()
         input.pin_bit_mask |= 1ULL << channels[i].input;
     }
     ESP_RETURN_ON_ERROR(gpio_config(&output), TAG, "relay GPIOs");
-    return gpio_config(&input);
+    ESP_RETURN_ON_ERROR(gpio_config(&input), TAG, "input GPIOs");
+    initialized = true;
+    return ESP_OK;
 }
 
-static void toggle(intptr_t channel)
+void app_relay_enable_matter_sync()
+{
+    matter_ready.store(true);
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) dirty[i].store(true);
+}
+
+static void sync_matter(intptr_t channel)
 {
     using namespace chip::app::Clusters;
     if (channel < 0 || channel >= APP_RELAY_CHANNEL_COUNT) return;
-    const uint16_t endpoint = channels[channel].endpoint;
-    esp_matter_attr_val_t value = {};
-    esp_err_t err = esp_matter::attribute::get_val(endpoint, OnOff::Id,
-                                                   OnOff::Attributes::OnOff::Id, &value);
-    if (err == ESP_OK) {
-        value.val.b = !value.val.b;
-        err = esp_matter::attribute::update(endpoint, OnOff::Id,
-                                            OnOff::Attributes::OnOff::Id, &value);
+    // Clear before the snapshot: any later local change requests another report.
+    dirty[channel].store(false);
+    portENTER_CRITICAL(&output_lock);
+    const bool on = power[channel];
+    portEXIT_CRITICAL(&output_lock);
+    esp_matter_attr_val_t value = esp_matter_bool(on);
+    syncing_task.store(xTaskGetCurrentTaskHandle());
+    esp_err_t err = esp_matter::attribute::update(channels[channel].endpoint, OnOff::Id,
+                                                OnOff::Attributes::OnOff::Id, &value);
+    syncing_task.store(nullptr);
+    if (err != ESP_OK) {
+        dirty[channel].store(true);
+        ESP_LOGW(TAG, "Matter state sync failed: %s", esp_err_to_name(err));
     }
-    if (err != ESP_OK) ESP_LOGE(TAG, "Channel %ld update failed: %s", (long)channel + 1, esp_err_to_name(err));
     pending[channel].store(false);
 }
 
@@ -135,14 +187,16 @@ static void switch_task(void *)
     while (true) {
         for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
             const bool present = signal_present(i);
-            if (filters[i].ready(present, esp_timer_get_time()) && !pending[i].exchange(true)) {
-                if (chip::DeviceLayer::PlatformMgr().ScheduleWork(toggle, i) == CHIP_NO_ERROR) {
+            if (filters[i].ready(present, esp_timer_get_time())) {
+                if (toggle_local(i) == ESP_OK) {
                     filters[i].accept();
-                    ESP_LOGI(TAG, "Channel %u: 60 Hz %s", i + 1, present ? "present" : "absent");
-                } else {
-                    pending[i].store(false);
-                    ESP_LOGE(TAG, "Could not schedule channel %u", i + 1);
+                    ESP_LOGI(TAG, "Channel %u: local 60 Hz %s", i + 1, present ? "present" : "absent");
                 }
+            }
+            // Reporting is optional; a busy/unavailable Matter queue cannot delay the GPIO.
+            if (matter_ready.load() && dirty[i].load() && !pending[i].exchange(true)) {
+                if (chip::DeviceLayer::PlatformMgr().ScheduleWork(sync_matter, i) != CHIP_NO_ERROR)
+                    pending[i].store(false);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -151,7 +205,6 @@ static void switch_task(void *)
 
 esp_err_t app_relay_start_switch()
 {
-    for (const auto &item : channels) if (!item.endpoint) return ESP_ERR_INVALID_STATE;
     esp_err_t err = gpio_install_isr_service(0);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
@@ -169,5 +222,7 @@ esp_err_t app_relay_register_endpoint(unsigned, uint16_t) { return ESP_ERR_NOT_S
 uint16_t app_relay_endpoint(unsigned) { return 0; }
 bool app_relay_has_endpoint(uint16_t) { return false; }
 esp_err_t app_relay_set_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t app_relay_restore_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_start_switch() { return ESP_OK; }
+void app_relay_enable_matter_sync() {}
 #endif
