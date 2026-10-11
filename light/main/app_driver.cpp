@@ -146,6 +146,9 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_
         attribute_id == OnOff::Attributes::OnOff::Id) {
         return app_relay_set_power(endpoint_id, val->val.b);
     }
+    if (app_relay_has_endpoint(endpoint_id) && cluster_id == LevelControl::Id &&
+        attribute_id == LevelControl::Attributes::CurrentLevel::Id)
+        return app_relay_set_brightness(endpoint_id, val->val.u8);
     return ESP_OK;
 #else
     esp_err_t err = ESP_OK;

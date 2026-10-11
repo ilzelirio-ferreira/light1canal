@@ -28,7 +28,8 @@ inline int gpio_config(gpio_config_t*){return 0;}
 inline int gpio_install_isr_service(int){return 0;}
 inline int gpio_isr_handler_add(int,void(*)(void*),void*){return 0;}
 inline int gpio_set_intr_type(int,int){return 0;}
-inline int64_t esp_timer_get_time(){return 0;}
+static int64_t fake_time=0;
+inline int64_t esp_timer_get_time(){return fake_time;}
 using TaskHandle_t=void*;
 inline TaskHandle_t xTaskGetCurrentTaskHandle(){return reinterpret_cast<void*>(1);}
 constexpr int pdPASS=1;
@@ -36,16 +37,19 @@ constexpr int pdPASS=1;
 inline void vTaskDelay(int){}
 inline int xTaskCreate(void(*)(void*),const char*,int,void*,int,void*){return pdPASS;}
 constexpr int CHIP_NO_ERROR=0;
-struct esp_matter_attr_val_t{struct{bool b;}val;};
+struct esp_matter_attr_val_t{union{bool b;uint8_t u8;}val;};
 inline esp_matter_attr_val_t esp_matter_bool(bool b){return {{b}};}
+inline esp_matter_attr_val_t esp_matter_nullable_uint8(uint8_t n){esp_matter_attr_val_t v{};v.val.u8=n;return v;}
+static uint8_t reported_brightness=0;
 static bool reported=false;static std::function<void()> during_report;
-namespace chip { namespace app {namespace Clusters {namespace OnOff {constexpr int Id=6;namespace Attributes{namespace OnOff{constexpr int Id=0;}}}}}
+namespace chip { namespace app {namespace Clusters {namespace OnOff {constexpr int Id=6;namespace Attributes{namespace OnOff{constexpr int Id=0;}}}namespace LevelControl{constexpr int Id=8;namespace Attributes{namespace CurrentLevel{constexpr int Id=0;}}}}}
 namespace DeviceLayer {struct Manager{int ScheduleWork(void(*)(intptr_t),intptr_t){return 1;}};inline Manager& PlatformMgr(){static Manager m;return m;}}}
 namespace esp_matter {namespace attribute {int update(uint16_t,int,int,esp_matter_attr_val_t*);}}
 '''
 test = r'''#include "app_relay.cpp"
 namespace esp_matter {namespace attribute {
-int update(uint16_t endpoint,int,int,esp_matter_attr_val_t* value){
+int update(uint16_t endpoint,int cluster,int,esp_matter_attr_val_t* value){
+ if(cluster==chip::app::Clusters::LevelControl::Id){reported_brightness=value->val.u8;return app_relay_set_brightness(endpoint,value->val.u8);}
  reported=value->val.b;
  if(during_report)during_report();
  return app_relay_set_power(endpoint,value->val.b);
@@ -69,6 +73,28 @@ int main(){
  assert(!reported && physical_level==0 && !dirty[0]);
  assert(app_relay_set_power(1,true)==ESP_OK && physical_level==1); // Remote control still works.
  assert(toggle_local(0)==ESP_OK && physical_level==0); // Physical input toggles the actual remote state.
+ assert(app_relay_set_power(1,true)==ESP_OK);
+ assert(blink[0].level==1 && physical_level==1);
+ assert(app_relay_set_brightness(1,2)==ESP_OK);
+ assert(AppBlink::half_period(2)==500000);
+ fake_time=499999;blink_tick(0,fake_time);assert(physical_level==1);
+ fake_time=500000;blink_tick(0,fake_time);assert(physical_level==0 && power[0]);
+ fake_time=1000000;blink_tick(0,fake_time);assert(physical_level==1);
+ assert(app_relay_set_brightness(1,254)==ESP_OK);
+ assert(AppBlink::half_period(254)==50000);
+ fake_time+=50000;blink_tick(0,fake_time);assert(physical_level==0);
+ assert(app_relay_set_power(1,true)==ESP_OK); // Explicit On cancels flashing even if logically on.
+ fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==1 && blink[0].level==1);
+ assert(app_relay_set_brightness(1,254)==ESP_OK);
+ fake_time+=50000;blink_tick(0,fake_time);assert(physical_level==0 && power[0]);
+ assert(toggle_local(0)==ESP_OK && !power[0] && blink[0].level==1);
+ fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==0);
+ assert(toggle_local(0)==ESP_OK && physical_level==1 && blink[0].level==1);
+ sync_matter(0);assert(reported && reported_brightness==1);
+ for(int n=3;n<=254;++n)assert(AppBlink::half_period(n)<=AppBlink::half_period(n-1));
+ assert(app_relay_set_brightness(1,0)==ESP_OK && blink[0].level==1);
+ assert(app_relay_set_power(1,false)==ESP_OK && physical_level==0 && blink[0].level==1);
+ assert(app_relay_set_brightness(1,254)==ESP_OK && physical_level==0 && blink[0].level==1);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

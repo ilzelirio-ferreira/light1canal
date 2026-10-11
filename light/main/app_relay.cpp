@@ -1,5 +1,6 @@
 #include "app_relay.h"
 #include "app_ac_input.h"
+#include "app_blink.h"
 #include "app_input_map.h"
 #include "sdkconfig.h"
 #if CONFIG_IDF_TARGET_ESP32S2
@@ -26,6 +27,7 @@ static std::atomic<bool> dirty[APP_RELAY_CHANNEL_COUNT]{};
 static std::atomic<bool> matter_ready{false};
 static std::atomic<TaskHandle_t> syncing_task{nullptr};
 static bool power[APP_RELAY_CHANNEL_COUNT]{};
+static AppBlink blink[APP_RELAY_CHANNEL_COUNT]{};
 static bool locally_changed[APP_RELAY_CHANNEL_COUNT]{};
 static bool initialized = false;
 static portMUX_TYPE output_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -51,7 +53,7 @@ static bool signal_present(unsigned channel)
 }
 
 // All writers serialize the GPIO and its logical state without taking the CHIP lock.
-static esp_err_t write_power_locked(unsigned channel, bool on)
+static esp_err_t write_output_locked(unsigned channel, bool on)
 {
 #if CONFIG_RELAY_ACTIVE_LOW
     const bool level = !on;
@@ -59,8 +61,26 @@ static esp_err_t write_power_locked(unsigned channel, bool on)
     const bool level = on;
 #endif
     esp_err_t err = gpio_set_level(channels[channel].output, level);
-    if (err == ESP_OK) power[channel] = on;
     return err;
+}
+
+static esp_err_t write_power_locked(unsigned channel, bool on)
+{
+    esp_err_t err = write_output_locked(channel, on);
+    if (err == ESP_OK) {
+        power[channel] = on;
+        blink[channel].power_changed(on);
+        dirty[channel].store(true);
+    }
+    return err;
+}
+
+static void blink_tick(unsigned channel, int64_t now)
+{
+    portENTER_CRITICAL(&output_lock);
+    if (blink[channel].tick(power[channel], now))
+        write_output_locked(channel, blink[channel].phase);
+    portEXIT_CRITICAL(&output_lock);
 }
 
 static esp_err_t set_channel_power(unsigned channel, bool on)
@@ -112,6 +132,21 @@ esp_err_t app_relay_set_power(uint16_t endpoint_id, bool on)
     if (syncing_task.load() == xTaskGetCurrentTaskHandle()) return ESP_OK;
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
         if (channels[i].endpoint == endpoint_id) return set_channel_power(i, on);
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t app_relay_set_brightness(uint16_t endpoint_id, uint8_t level)
+{
+    if (syncing_task.load() == xTaskGetCurrentTaskHandle() || !matter_ready.load()) return ESP_OK;
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
+        if (channels[i].endpoint != endpoint_id) continue;
+        portENTER_CRITICAL(&output_lock);
+        blink[i].brightness_changed(power[i] ? level : APP_BLINK_MIN_LEVEL, power[i], esp_timer_get_time());
+        esp_err_t err = write_output_locked(i, power[i]);
+        dirty[i].store(true);
+        portEXIT_CRITICAL(&output_lock);
+        return err;
     }
     return ESP_ERR_NOT_FOUND;
 }
@@ -169,11 +204,17 @@ static void sync_matter(intptr_t channel)
     dirty[channel].store(false);
     portENTER_CRITICAL(&output_lock);
     const bool on = power[channel];
+    const uint8_t level = blink[channel].level;
     portEXIT_CRITICAL(&output_lock);
     esp_matter_attr_val_t value = esp_matter_bool(on);
     syncing_task.store(xTaskGetCurrentTaskHandle());
     esp_err_t err = esp_matter::attribute::update(channels[channel].endpoint, OnOff::Id,
                                                 OnOff::Attributes::OnOff::Id, &value);
+    if (err == ESP_OK) {
+        esp_matter_attr_val_t brightness = esp_matter_nullable_uint8(level);
+        err = esp_matter::attribute::update(channels[channel].endpoint, LevelControl::Id,
+                                            LevelControl::Attributes::CurrentLevel::Id, &brightness);
+    }
     syncing_task.store(nullptr);
     if (err != ESP_OK) {
         dirty[channel].store(true);
@@ -207,6 +248,7 @@ static void switch_task(void *)
                 }
             }
             // Reporting is optional; a busy/unavailable Matter queue cannot delay the GPIO.
+            blink_tick(i, esp_timer_get_time());
             queue_sync(i);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -232,6 +274,7 @@ esp_err_t app_relay_register_endpoint(unsigned, uint16_t) { return ESP_ERR_NOT_S
 uint16_t app_relay_endpoint(unsigned) { return 0; }
 bool app_relay_has_endpoint(uint16_t) { return false; }
 esp_err_t app_relay_set_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t app_relay_set_brightness(uint16_t, uint8_t) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_restore_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_start_switch() { return ESP_OK; }
 void app_relay_enable_matter_sync() {}
