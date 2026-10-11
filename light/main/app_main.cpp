@@ -166,6 +166,20 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return err;
 }
 
+#if CONFIG_IDF_TARGET_ESP32S2
+// On can be received while the logical state is already true (including flashing).
+// Handle the command itself, because an unchanged attribute may have no callback.
+static esp_err_t power_command(const chip::app::ConcreteCommandPath &path,
+                               chip::TLV::TLVReader &, void *)
+{
+    if (path.mCommandId == OnOff::Commands::On::Id)
+        return app_relay_set_power(path.mEndpointId, true);
+    if (path.mCommandId == OnOff::Commands::Off::Id)
+        return app_relay_set_power(path.mEndpointId, false);
+    return ESP_OK;
+}
+#endif
+
 extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
@@ -213,6 +227,11 @@ extern "C" void app_main()
         ABORT_APP_ON_FAILURE(relay_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay channel %u", channel + 1));
         const uint16_t relay_id = endpoint::get_id(relay_endpoint);
         ESP_ERROR_CHECK(app_relay_register_endpoint(channel, relay_id));
+        for (uint32_t id : {OnOff::Commands::On::Id, OnOff::Commands::Off::Id}) {
+            auto *power = esp_matter::command::get(relay_id, OnOff::Id, id);
+            ABORT_APP_ON_FAILURE(power != nullptr, ESP_LOGE(TAG, "Missing power command"));
+            esp_matter::command::set_user_callback(power, power_command);
+        }
         ESP_ERROR_CHECK(app_portal_add_channel(relay_endpoint, channel));
         if (channel == 0) light_endpoint_id = relay_id;
     }
