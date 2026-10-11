@@ -53,7 +53,11 @@ static bool signal_present(unsigned channel)
 // All writers serialize the GPIO and its logical state without taking the CHIP lock.
 static esp_err_t write_power_locked(unsigned channel, bool on)
 {
-    const bool level = CONFIG_RELAY_ACTIVE_LOW ? !on : on;
+#if CONFIG_RELAY_ACTIVE_LOW
+    const bool level = !on;
+#else
+    const bool level = on;
+#endif
     esp_err_t err = gpio_set_level(channels[channel].output, level);
     if (err == ESP_OK) power[channel] = on;
     return err;

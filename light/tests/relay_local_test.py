@@ -8,7 +8,6 @@ common = r'''#pragma once
 using esp_err_t=int; constexpr int ESP_OK=0, ESP_FAIL=1, ESP_ERR_INVALID_ARG=2, ESP_ERR_NOT_FOUND=3, ESP_ERR_INVALID_STATE=4, ESP_ERR_NO_MEM=5;
 #define ESP_ERR_NOT_SUPPORTED 6
 #define CONFIG_IDF_TARGET_ESP32S2 1
-#define CONFIG_RELAY_ACTIVE_LOW 0
 #define ESP_RETURN_ON_ERROR(expr,...) do {int e=(expr);if(e)return e;} while(0)
 #define ESP_LOGI(...) ((void)TAG)
 #define ESP_LOGE(...) ((void)TAG)
