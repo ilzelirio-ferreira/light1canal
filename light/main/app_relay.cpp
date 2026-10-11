@@ -103,6 +103,7 @@ bool app_relay_has_endpoint(uint16_t endpoint_id)
 esp_err_t app_relay_set_power(uint16_t endpoint_id, bool on)
 {
     if (!endpoint_id) return ESP_ERR_INVALID_ARG;
+    if (!matter_ready.load()) return app_relay_restore_power(endpoint_id, on);
     // A report of local state must never replay an older value onto the GPIO.
     if (syncing_task.load() == xTaskGetCurrentTaskHandle()) return ESP_OK;
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
@@ -177,6 +178,14 @@ static void sync_matter(intptr_t channel)
     pending[channel].store(false);
 }
 
+static void queue_sync(unsigned channel)
+{
+    if (matter_ready.load() && dirty[channel].load() && !pending[channel].exchange(true)) {
+        if (chip::DeviceLayer::PlatformMgr().ScheduleWork(sync_matter, channel) != CHIP_NO_ERROR)
+            pending[channel].store(false);
+    }
+}
+
 static void switch_task(void *)
 {
     AcTransitionFilter filters[APP_RELAY_CHANNEL_COUNT];
@@ -194,10 +203,7 @@ static void switch_task(void *)
                 }
             }
             // Reporting is optional; a busy/unavailable Matter queue cannot delay the GPIO.
-            if (matter_ready.load() && dirty[i].load() && !pending[i].exchange(true)) {
-                if (chip::DeviceLayer::PlatformMgr().ScheduleWork(sync_matter, i) != CHIP_NO_ERROR)
-                    pending[i].store(false);
-            }
+            queue_sync(i);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }

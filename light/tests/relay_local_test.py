@@ -58,7 +58,10 @@ int main(){
  assert(toggle_local(0)==ESP_OK && physical_level==0);
  assert(app_relay_register_endpoint(0,1)==ESP_OK);
  assert(app_relay_restore_power(1,true)==ESP_OK && physical_level==0); // Don't undo boot-time switch operations.
+ assert(app_relay_set_power(1,true)==ESP_OK && physical_level==0); // Startup callbacks also preserve physical operations.
  app_relay_enable_matter_sync();
+ queue_sync(0); // Fake Matter queue rejects the work.
+ assert(!pending[0] && dirty[0] && physical_level==0);
  assert(toggle_local(0)==ESP_OK && physical_level==1);
  during_report=[](){assert(toggle_local(0)==ESP_OK);}; // Local input changes during an old Matter report.
  sync_matter(0);
