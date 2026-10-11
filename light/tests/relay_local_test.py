@@ -74,27 +74,30 @@ int main(){
  assert(app_relay_set_power(1,true)==ESP_OK && physical_level==1); // Remote control still works.
  assert(toggle_local(0)==ESP_OK && physical_level==0); // Physical input toggles the actual remote state.
  assert(app_relay_set_power(1,true)==ESP_OK);
- assert(blink[0].level==1 && physical_level==1);
- assert(app_relay_set_brightness(1,2)==ESP_OK);
- assert(AppBlink::half_period(2)==500000);
+ assert(blink[0].level==254 && physical_level==1);
+ assert(app_relay_set_brightness(1,1)==ESP_OK);
+ assert(AppBlink::half_period(1)==500000);
  fake_time=499999;blink_tick(0,fake_time);assert(physical_level==1);
  fake_time=500000;blink_tick(0,fake_time);assert(physical_level==0 && power[0]);
  fake_time=1000000;blink_tick(0,fake_time);assert(physical_level==1);
- assert(app_relay_set_brightness(1,254)==ESP_OK);
- assert(AppBlink::half_period(254)==50000);
+ assert(app_relay_set_brightness(1,253)==ESP_OK);
+ assert(AppBlink::half_period(253)==50000);
  fake_time+=50000;blink_tick(0,fake_time);assert(physical_level==0);
  assert(app_relay_set_power(1,true)==ESP_OK); // Explicit On cancels flashing even if logically on.
- fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==1 && blink[0].level==1);
- assert(app_relay_set_brightness(1,254)==ESP_OK);
+ fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==1 && blink[0].level==254);
+ assert(app_relay_set_brightness(1,253)==ESP_OK);
  fake_time+=50000;blink_tick(0,fake_time);assert(physical_level==0 && power[0]);
- assert(toggle_local(0)==ESP_OK && !power[0] && blink[0].level==1);
+ assert(toggle_local(0)==ESP_OK && !power[0] && blink[0].level==0);
  fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==0);
- assert(toggle_local(0)==ESP_OK && physical_level==1 && blink[0].level==1);
- sync_matter(0);assert(reported && reported_brightness==1);
- for(int n=3;n<=254;++n)assert(AppBlink::half_period(n)<=AppBlink::half_period(n-1));
- assert(app_relay_set_brightness(1,0)==ESP_OK && blink[0].level==1);
- assert(app_relay_set_power(1,false)==ESP_OK && physical_level==0 && blink[0].level==1);
- assert(app_relay_set_brightness(1,254)==ESP_OK && physical_level==0 && blink[0].level==1);
+ assert(toggle_local(0)==ESP_OK && physical_level==1 && blink[0].level==254);
+ sync_matter(0);assert(reported && reported_brightness==254);
+ for(int n=2;n<=253;++n)assert(AppBlink::half_period(n)<=AppBlink::half_period(n-1));
+ assert(app_relay_set_brightness(1,0)==ESP_OK && blink[0].level==0 && !power[0] && physical_level==0);
+ assert(app_relay_set_power(1,false)==ESP_OK && physical_level==0 && blink[0].level==0);
+ assert(app_relay_set_brightness(1,254)==ESP_OK && physical_level==1 && blink[0].level==254);
+ fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==1);
+ assert(app_relay_set_power(1,true)==ESP_OK && blink[0].level==254);
+ assert(app_relay_set_power(1,false)==ESP_OK && blink[0].level==0);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

@@ -142,8 +142,12 @@ esp_err_t app_relay_set_brightness(uint16_t endpoint_id, uint8_t level)
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
         if (channels[i].endpoint != endpoint_id) continue;
         portENTER_CRITICAL(&output_lock);
-        blink[i].brightness_changed(power[i] ? level : APP_BLINK_MIN_LEVEL, power[i], esp_timer_get_time());
-        esp_err_t err = write_output_locked(i, power[i]);
+        const bool on = AppBlink::clamp(level) != 0;
+        esp_err_t err = write_output_locked(i, on);
+        if (err == ESP_OK) {
+            power[i] = on;
+            blink[i].brightness_changed(level, on, esp_timer_get_time());
+        }
         dirty[i].store(true);
         portEXIT_CRITICAL(&output_lock);
         return err;

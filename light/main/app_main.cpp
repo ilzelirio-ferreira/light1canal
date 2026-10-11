@@ -206,9 +206,9 @@ extern "C" void app_main()
         dimmable_light::config_t relay_config;
         relay_config.on_off.on_off = DEFAULT_POWER;
         relay_config.on_off_lighting.start_up_on_off = nullptr;
-        relay_config.level_control.current_level = 1;
-        relay_config.level_control.on_level = 1;
-        relay_config.level_control_lighting.start_up_current_level = 1;
+        relay_config.level_control.current_level = DEFAULT_POWER ? 254 : 0;
+        relay_config.level_control.on_level = 254;
+        relay_config.level_control_lighting.start_up_current_level = 254;
         endpoint_t *relay_endpoint = dimmable_light::create(node, &relay_config, ENDPOINT_FLAG_NONE, light_handle);
         ABORT_APP_ON_FAILURE(relay_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create relay channel %u", channel + 1));
         const uint16_t relay_id = endpoint::get_id(relay_endpoint);
