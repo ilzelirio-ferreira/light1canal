@@ -28,6 +28,7 @@ static std::atomic<bool> matter_ready{false};
 static std::atomic<TaskHandle_t> syncing_task{nullptr};
 static bool power[APP_RELAY_CHANNEL_COUNT]{};
 static AppBlink blink[APP_RELAY_CHANNEL_COUNT]{};
+static bool brightness_command[APP_RELAY_CHANNEL_COUNT]{};
 static bool locally_changed[APP_RELAY_CHANNEL_COUNT]{};
 static bool initialized = false;
 static portMUX_TYPE output_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -69,6 +70,7 @@ static esp_err_t write_power_locked(unsigned channel, bool on)
     esp_err_t err = write_output_locked(channel, on);
     if (err == ESP_OK) {
         power[channel] = on;
+        brightness_command[channel] = false;
         blink[channel].power_changed(on);
         dirty[channel].store(true);
     }
@@ -131,7 +133,40 @@ esp_err_t app_relay_set_power(uint16_t endpoint_id, bool on)
     // A report of local state must never replay an older value onto the GPIO.
     if (syncing_task.load() == xTaskGetCurrentTaskHandle()) return ESP_OK;
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
+        if (channels[i].endpoint != endpoint_id) continue;
+        portENTER_CRITICAL(&output_lock);
+        esp_err_t err;
+        if (brightness_command[i]) {
+            // OnOff changes caused by a brightness command must not reset its level.
+            err = write_output_locked(i, on);
+            if (err == ESP_OK) {
+                power[i] = on;
+                if (!on) blink[i].power_changed(false);
+                else blink[i].brightness_changed(blink[i].level, true, esp_timer_get_time());
+                dirty[i].store(true);
+            }
+        } else err = write_power_locked(i, on);
+        portEXIT_CRITICAL(&output_lock);
+        return err;
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t app_relay_power_command(uint16_t endpoint_id, bool on)
+{
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i)
         if (channels[i].endpoint == endpoint_id) return set_channel_power(i, on);
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t app_relay_brightness_command(uint16_t endpoint_id)
+{
+    for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
+        if (channels[i].endpoint != endpoint_id) continue;
+        portENTER_CRITICAL(&output_lock);
+        brightness_command[i] = true;
+        portEXIT_CRITICAL(&output_lock);
+        return ESP_OK;
     }
     return ESP_ERR_NOT_FOUND;
 }
@@ -142,6 +177,12 @@ esp_err_t app_relay_set_brightness(uint16_t endpoint_id, uint8_t level)
     for (unsigned i = 0; i < APP_RELAY_CHANNEL_COUNT; ++i) {
         if (channels[i].endpoint != endpoint_id) continue;
         portENTER_CRITICAL(&output_lock);
+        if (!brightness_command[i]) {
+            // Ignore restored levels and unfinished fades after an explicit power/local command.
+            dirty[i].store(true);
+            portEXIT_CRITICAL(&output_lock);
+            return ESP_OK;
+        }
         const bool on = AppBlink::clamp(level) != 0;
         esp_err_t err = write_output_locked(i, on);
         if (err == ESP_OK) {
@@ -278,6 +319,8 @@ esp_err_t app_relay_register_endpoint(unsigned, uint16_t) { return ESP_ERR_NOT_S
 uint16_t app_relay_endpoint(unsigned) { return 0; }
 bool app_relay_has_endpoint(uint16_t) { return false; }
 esp_err_t app_relay_set_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t app_relay_power_command(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t app_relay_brightness_command(uint16_t) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_set_brightness(uint16_t, uint8_t) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_restore_power(uint16_t, bool) { return ESP_ERR_NOT_SUPPORTED; }
 esp_err_t app_relay_start_switch() { return ESP_OK; }

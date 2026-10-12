@@ -173,10 +173,15 @@ static esp_err_t power_command(const chip::app::ConcreteCommandPath &path,
                                chip::TLV::TLVReader &, void *)
 {
     if (path.mCommandId == OnOff::Commands::On::Id)
-        return app_relay_set_power(path.mEndpointId, true);
+        return app_relay_power_command(path.mEndpointId, true);
     if (path.mCommandId == OnOff::Commands::Off::Id)
-        return app_relay_set_power(path.mEndpointId, false);
+        return app_relay_power_command(path.mEndpointId, false);
     return ESP_OK;
+}
+static esp_err_t brightness_command(const chip::app::ConcreteCommandPath &path,
+                                    chip::TLV::TLVReader &, void *)
+{
+    return app_relay_brightness_command(path.mEndpointId);
 }
 #endif
 
@@ -231,6 +236,13 @@ extern "C" void app_main()
             auto *power = esp_matter::command::get(relay_id, OnOff::Id, id);
             ABORT_APP_ON_FAILURE(power != nullptr, ESP_LOGE(TAG, "Missing power command"));
             esp_matter::command::set_user_callback(power, power_command);
+        }
+        for (uint32_t id : {LevelControl::Commands::MoveToLevel::Id, LevelControl::Commands::Move::Id,
+                            LevelControl::Commands::Step::Id, LevelControl::Commands::MoveToLevelWithOnOff::Id,
+                            LevelControl::Commands::MoveWithOnOff::Id, LevelControl::Commands::StepWithOnOff::Id}) {
+            auto *level = esp_matter::command::get(relay_id, LevelControl::Id, id);
+            ABORT_APP_ON_FAILURE(level != nullptr, ESP_LOGE(TAG, "Missing brightness command"));
+            esp_matter::command::set_user_callback(level, brightness_command);
         }
         ESP_ERROR_CHECK(app_portal_add_channel(relay_endpoint, channel));
         if (channel == 0) light_endpoint_id = relay_id;

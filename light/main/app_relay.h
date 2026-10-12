@@ -14,3 +14,5 @@ esp_err_t app_relay_configure_inputs(const uint8_t *pins);
 void app_relay_enable_matter_sync();
 esp_err_t app_relay_restore_power(uint16_t endpoint_id, bool on);
 esp_err_t app_relay_set_brightness(uint16_t endpoint_id, uint8_t level);
+esp_err_t app_relay_power_command(uint16_t endpoint_id, bool on);
+esp_err_t app_relay_brightness_command(uint16_t endpoint_id);
