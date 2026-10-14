@@ -256,7 +256,8 @@ static void sync_matter(intptr_t channel)
     esp_err_t err = esp_matter::attribute::update(channels[channel].endpoint, OnOff::Id,
                                                 OnOff::Attributes::OnOff::Id, &value);
     if (err == ESP_OK) {
-        esp_matter_attr_val_t brightness = esp_matter_nullable_uint8(level);
+        // Lighting CurrentLevel is constrained to MinLevel=1; Off is represented by OnOff=false.
+        esp_matter_attr_val_t brightness = esp_matter_nullable_uint8(level ? level : 1);
         err = esp_matter::attribute::update(channels[channel].endpoint, LevelControl::Id,
                                             LevelControl::Attributes::CurrentLevel::Id, &brightness);
     }

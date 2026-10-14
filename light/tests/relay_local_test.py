@@ -49,7 +49,7 @@ namespace esp_matter {namespace attribute {int update(uint16_t,int,int,esp_matte
 test = r'''#include "app_relay.cpp"
 namespace esp_matter {namespace attribute {
 int update(uint16_t endpoint,int cluster,int,esp_matter_attr_val_t* value){
- if(cluster==chip::app::Clusters::LevelControl::Id){reported_brightness=value->val.u8;return app_relay_set_brightness(endpoint,value->val.u8);}
+ if(cluster==chip::app::Clusters::LevelControl::Id){if(value->val.u8<1 || value->val.u8>254)return ESP_ERR_INVALID_ARG;reported_brightness=value->val.u8;return app_relay_set_brightness(endpoint,value->val.u8);}
  reported=value->val.b;
  if(during_report)during_report();
  return app_relay_set_power(endpoint,value->val.b);
@@ -106,7 +106,7 @@ int main(){
  // Reproduce the SDK restoring the old brightness after an Off command.
  assert(app_relay_set_brightness(1,128)==ESP_OK && physical_level==0 && !power[0]);
  fake_time+=1000000;blink_tick(0,fake_time);assert(physical_level==0);
- sync_matter(0);assert(!reported && reported_brightness==0);
+ sync_matter(0);assert(!reported && reported_brightness==1 && !dirty[0] && physical_level==0);
  assert(app_relay_power_command(1,true)==ESP_OK);
  assert(app_relay_set_brightness(1,128)==ESP_OK && physical_level==1 && blink[0].level==254);
  assert(app_relay_brightness_command(1)==ESP_OK);
