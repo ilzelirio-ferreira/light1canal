@@ -52,3 +52,7 @@ CONFIG_DEVICE_TYPE=257
 # Validate GitHub HTTPS and release-asset redirects with trusted CA certificates.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# Matter shares internal RAM with Wi-Fi; allocate TLS handshake/buffers in embedded PSRAM.
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=n
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
