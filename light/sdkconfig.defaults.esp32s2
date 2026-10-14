@@ -48,3 +48,7 @@ CONFIG_ENABLE_EXTENDED_DISCOVERY=y
 CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
 # Primary discovery type matches the dimmable light endpoint (0x0101).
 CONFIG_DEVICE_TYPE=257
+
+# Validate GitHub HTTPS and release-asset redirects with trusted CA certificates.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y

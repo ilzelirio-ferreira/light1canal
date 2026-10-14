@@ -7,6 +7,9 @@ on:
       - master
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -55,3 +58,12 @@ jobs:
             light/build/flasher_args.json
             light/build/flash_args
           if-no-files-found: error
+
+      - name: Publish latest OTA firmware
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tag="firmware-${GITHUB_SHA:0:7}"
+          gh release create "$release_tag" light/build/light.bin --target "$GITHUB_SHA" --title "Firmware ${GITHUB_SHA:0:7}" --notes "Firmware ESP32-S2 Light1Canal. Arquivo light.bin para atualizacao OTA pelo painel." --draft
+          gh release edit "$release_tag" --draft=false --latest

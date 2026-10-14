@@ -15,7 +15,7 @@ class Element {
   get id() { return this._id; }
   append() {}
 }
-for (const id of ['login','panel','key','enter','loginStatus','module','ssid','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice','pairMatter']) {
+for (const id of ['login','panel','key','enter','loginStatus','module','ssid','info','settings','wifiPassword','openWifi','newKey','saveStatus','firmware','upload','progress','otaStatus','matterQr','matterManual','matterStatus','matterDevice','pairMatter','updateGithub']) {
   const element = new Element(); element.id = id;
 }
 let request;
@@ -27,13 +27,17 @@ class XHR {
 }
 const config = {module: 'Modulo <script>', ssid: 'Rede "teste"', names: ['Luz <1>'], inputs:[33],matter:{device:'80:65:99:4C:CB:9C',payload:'MT:TEST',manual:'12345678901',qr:['101','010','101']},version:'1.0', ip:'192.168.15.5'};
 let lastFetch, unauthorized = false;
+let githubStatus=[{state:1,bytes:50,total:100,message:'Baixando'}, {state:2,bytes:100,total:100,message:'Reiniciando'}];
+let githubStarted=false;
 const context = vm.createContext({
-  document: {getElementById: id => elements.get(id), createElement: () => new Element(), querySelectorAll: () => [elements.get('enter'),elements.get('upload')]},
+  document: {getElementById: id => elements.get(id), createElement: () => new Element(), querySelectorAll: () => [elements.get('enter'),elements.get('upload'),elements.get('updateGithub')]},
   fetch: async (path, options) => {
     lastFetch = {path, options};
+    if(path==='/api/ota/github'){githubStarted=true;assert.equal(options.method,'POST');assert.equal(options.headers['X-Portal-Key'],'configurar123')}
+    if(path==='/api/ota/status')return {ok:true,json:async()=>githubStatus.shift()};
     return {ok: !unauthorized, text: async () => 'Senha incorreta', json: async () => options.method && path !== '/api/matter/pair' ? {message:'Salvo'} : config};
   },
-  XMLHttpRequest: XHR, TextEncoder,
+  XMLHttpRequest: XHR, TextEncoder, setTimeout: fn=>fn(),
 });
 vm.runInContext(source, context);
 const get = id => elements.get(id);
@@ -115,6 +119,14 @@ const get = id => elements.get(id);
   assert.equal(get('upload').disabled, false);
   request.status = 200; request.onload();
   assert.match(get('otaStatus').textContent, /validada/);
+  await get('updateGithub').onclick();
+  assert.equal(githubStarted,true);
+  assert.equal(get('progress').value,100);
+  assert.equal(get('otaStatus').textContent,'Reiniciando');
+  githubStatus=[{state:3,message:'Falha no download'}];
+  await get('updateGithub').onclick();
+  assert.equal(get('otaStatus').textContent,'Falha no download');
+  assert.equal(get('updateGithub').disabled,false);
   unauthorized = true;
   get('enter').disabled=true;
   const beforeEnter=lastFetch;

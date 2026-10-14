@@ -16,6 +16,8 @@
 #include <esp_app_desc.h>
 #include <esp_check.h>
 #include <esp_http_server.h>
+#include <esp_https_ota.h>
+#include <esp_crt_bundle.h>
 #include <esp_image_format.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
@@ -490,6 +492,89 @@ static esp_err_t ota_post(httpd_req_t *req)
     return reply(req, "200 OK", "Atualização validada. Reiniciando.");
 }
 
+static constexpr const char *OTA_LATEST_URL =
+    "https://github.com/ilzelirio-ferreira/light1canal/releases/latest/download/light.bin";
+// Status is shared with the HTTP server; the network task owns the OTA handle.
+static std::atomic<int> github_ota_state{0}; // idle, downloading, done, failed
+static std::atomic<int> github_ota_bytes{0}, github_ota_total{0};
+
+static esp_err_t github_ota_status(httpd_req_t *req)
+{
+    if (!authenticated(req)) return ESP_OK;
+    cJSON *json = cJSON_CreateObject();
+    if (!json) return reply(req, "500 Internal Server Error", "Memória insuficiente.");
+    const int state = github_ota_state.load();
+    const char *messages[] = {"Pronto para atualizar.", "Baixando firmware do GitHub...",
+                             "Atualização validada. Reiniciando.",
+                             "Falha na atualização pelo GitHub. Firmware atual preservado. Tente novamente."};
+    cJSON_AddNumberToObject(json, "state", state);
+    cJSON_AddNumberToObject(json, "bytes", github_ota_bytes.load());
+    cJSON_AddNumberToObject(json, "total", github_ota_total.load());
+    cJSON_AddStringToObject(json, "message", messages[state]);
+    return json_reply(req, json);
+}
+
+static void github_ota_task(void *)
+{
+    esp_http_client_config_t http = {};
+    http.url = OTA_LATEST_URL;
+    http.crt_bundle_attach = esp_crt_bundle_attach;
+    http.timeout_ms = 15000;
+    http.max_redirection_count = 8;
+    http.keep_alive_enable = true;
+    esp_https_ota_config_t ota = {};
+    ota.http_config = &http;
+    esp_https_ota_handle_t handle = nullptr;
+    esp_err_t err = esp_https_ota_begin(&ota, &handle);
+    if (err == ESP_OK) {
+        esp_app_desc_t app = {};
+        err = esp_https_ota_get_img_desc(handle, &app);
+        if (err == ESP_OK && (app.magic_word != ESP_APP_DESC_MAGIC_WORD ||
+            memcmp(app.project_name, esp_app_get_description()->project_name, sizeof(app.project_name)) != 0))
+            err = ESP_ERR_INVALID_ARG;
+        const auto *partition = esp_ota_get_next_update_partition(nullptr);
+        const int total = esp_https_ota_get_image_size(handle);
+        github_ota_total.store(total > 0 ? total : 0);
+        if (err == ESP_OK && (!partition || (total > 0 && static_cast<size_t>(total) > partition->size)))
+            err = ESP_ERR_INVALID_SIZE;
+    }
+    if (err == ESP_OK) {
+        do {
+            err = esp_https_ota_perform(handle);
+            github_ota_bytes.store(esp_https_ota_get_image_len_read(handle));
+            vTaskDelay(pdMS_TO_TICKS(1));
+        } while (err == ESP_ERR_HTTPS_OTA_IN_PROGRESS);
+        if (err == ESP_OK && !esp_https_ota_is_complete_data_received(handle)) err = ESP_ERR_INVALID_SIZE;
+    }
+    if (handle) {
+        if (err == ESP_OK) err = esp_https_ota_finish(handle); // Image/chip validation and boot-slot activation.
+        else esp_https_ota_abort(handle);
+    }
+    if (err == ESP_OK) err = esp_timer_start_once(reboot_timer, 3000000);
+    if (err != ESP_OK) {
+        esp_ota_set_boot_partition(esp_ota_get_running_partition());
+        ESP_LOGE(TAG, "GitHub OTA failed: %s", esp_err_to_name(err));
+        github_ota_state.store(3);
+        changing.store(false);
+    } else github_ota_state.store(2);
+    vTaskDelete(nullptr);
+}
+
+static esp_err_t github_ota_post(httpd_req_t *req)
+{
+    if (!authenticated(req)) return ESP_OK;
+    wifi_ap_record_t access_point = {};
+    if (esp_wifi_sta_get_ap_info(&access_point) != ESP_OK)
+        return reply(req, "409 Conflict", "Conecte a placa ao Wi-Fi com internet para atualizar pelo GitHub.");
+    if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra operação está em andamento.");
+    github_ota_bytes.store(0); github_ota_total.store(0); github_ota_state.store(1);
+    if (xTaskCreate(github_ota_task, "github_ota", 8192, nullptr, 2, nullptr) != pdPASS) {
+        github_ota_state.store(3); changing.store(false);
+        return reply(req, "500 Internal Server Error", "Não foi possível iniciar a atualização.");
+    }
+    return github_ota_status(req);
+}
+
 static esp_err_t set_ap(bool enabled)
 {
     chip::DeviceLayer::StackLock lock;
@@ -621,7 +706,7 @@ esp_err_t app_portal_start()
     snprintf(ap_name, sizeof(ap_name), "Light-%02X%02X%02X", mac[3], mac[4], mac[5]);
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     http.stack_size = 8192;
-    http.max_uri_handlers = 5;
+    http.max_uri_handlers = 7;
     http.max_open_sockets = 4;
     http.lru_purge_enable = true;
     http.recv_wait_timeout = 5;
@@ -630,11 +715,15 @@ esp_err_t app_portal_start()
     httpd_uri_t get = {}; get.uri = "/api/config"; get.method = HTTP_GET; get.handler = config_get;
     httpd_uri_t save = {}; save.uri = "/api/config"; save.method = HTTP_POST; save.handler = config_post;
     httpd_uri_t pairing = {}; pairing.uri = "/api/matter/pair"; pairing.method = HTTP_POST; pairing.handler = pairing_post;
+    httpd_uri_t remote = {}; remote.uri = "/api/ota/github"; remote.method = HTTP_POST; remote.handler = github_ota_post;
+    httpd_uri_t progress = {}; progress.uri = "/api/ota/status"; progress.method = HTTP_GET; progress.handler = github_ota_status;
     httpd_uri_t ota = {}; ota.uri = "/api/ota"; ota.method = HTTP_POST; ota.handler = ota_post;
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &root), TAG, "root handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &get), TAG, "config handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &save), TAG, "save handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &pairing), TAG, "pairing handler");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &remote), TAG, "GitHub OTA handler");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &progress), TAG, "OTA progress handler");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &ota), TAG, "OTA handler");
     ESP_RETURN_ON_ERROR(httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_redirect), TAG, "captive redirect");
     if (xTaskCreate(network_task, "portal_network", 4096, nullptr, 2, nullptr) != pdPASS ||
