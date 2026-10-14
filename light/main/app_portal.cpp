@@ -497,6 +497,7 @@ static constexpr const char *OTA_LATEST_URL =
 // Status is shared with the HTTP server; the network task owns the OTA handle.
 static std::atomic<int> github_ota_state{0}; // idle, downloading, done, failed
 static std::atomic<int> github_ota_bytes{0}, github_ota_total{0};
+static std::atomic<esp_err_t> github_ota_error{ESP_OK};
 
 static esp_err_t github_ota_status(httpd_req_t *req)
 {
@@ -511,6 +512,7 @@ static esp_err_t github_ota_status(httpd_req_t *req)
     cJSON_AddNumberToObject(json, "bytes", github_ota_bytes.load());
     cJSON_AddNumberToObject(json, "total", github_ota_total.load());
     cJSON_AddStringToObject(json, "message", messages[state]);
+    cJSON_AddStringToObject(json, "error", esp_err_to_name(github_ota_error.load()));
     return json_reply(req, json);
 }
 
@@ -519,7 +521,11 @@ static void github_ota_task(void *)
     esp_http_client_config_t http = {};
     http.url = OTA_LATEST_URL;
     http.crt_bundle_attach = esp_crt_bundle_attach;
-    http.timeout_ms = 15000;
+    http.timeout_ms = 30000;
+    // GitHub release-asset redirects contain signed query strings longer than 512 bytes.
+    http.buffer_size = 4096;
+    http.buffer_size_tx = 4096;
+    http.user_agent = "Light1Canal-OTA";
     http.max_redirection_count = 8;
     http.keep_alive_enable = true;
     esp_https_ota_config_t ota = {};
@@ -554,6 +560,7 @@ static void github_ota_task(void *)
     if (err != ESP_OK) {
         esp_ota_set_boot_partition(esp_ota_get_running_partition());
         ESP_LOGE(TAG, "GitHub OTA failed: %s", esp_err_to_name(err));
+        github_ota_error.store(err);
         github_ota_state.store(3);
         changing.store(false);
     } else github_ota_state.store(2);
@@ -567,6 +574,7 @@ static esp_err_t github_ota_post(httpd_req_t *req)
     if (esp_wifi_sta_get_ap_info(&access_point) != ESP_OK)
         return reply(req, "409 Conflict", "Conecte a placa ao Wi-Fi com internet para atualizar pelo GitHub.");
     if (changing.exchange(true)) return reply(req, "409 Conflict", "Outra operação está em andamento.");
+    github_ota_error.store(ESP_OK);
     github_ota_bytes.store(0); github_ota_total.store(0); github_ota_state.store(1);
     if (xTaskCreate(github_ota_task, "github_ota", 8192, nullptr, 2, nullptr) != pdPASS) {
         github_ota_state.store(3); changing.store(false);
